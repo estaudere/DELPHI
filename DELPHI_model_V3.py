@@ -4,10 +4,13 @@ import numpy as np
 from scipy.integrate import solve_ivp
 from scipy.optimize import minimize
 from datetime import datetime, timedelta
+
+from multiprocessing import set_start_method
+
 import multiprocessing as mp
 import time
 from functools import partial
-from tqdm import tqdm_notebook as tqdm
+from tqdm.notebook import tqdm
 from DELPHI_utils_V3 import (
     DELPHIDataCreator, DELPHIAggregations, DELPHIDataSaver, get_initial_conditions, mape
 )
@@ -18,19 +21,20 @@ from DELPHI_params_V3 import (
 )
 import os
 import yaml
+from pathlib import Path
 
 
 with open("config.yml", "r") as ymlfile:
     CONFIG = yaml.load(ymlfile, Loader=yaml.BaseLoader)
 CONFIG_FILEPATHS = CONFIG["filepaths"]
-USER_RUNNING = "michael"
+USER_RUNNING = "neha"
 
 time_beginning = time.time()
 yesterday = "".join(str(datetime.now().date() - timedelta(days=1)).split("-"))
 PATH_TO_FOLDER_DANGER_MAP = CONFIG_FILEPATHS["danger_map"][USER_RUNNING]
-PATH_TO_WEBSITE_PREDICTED = CONFIG_FILEPATHS["website"][USER_RUNNING]
+# PATH_TO_WEBSITE_PREDICTED = CONFIG_FILEPATHS["website"][USER_RUNNING]
 popcountries = pd.read_csv(
-    PATH_TO_FOLDER_DANGER_MAP + f"processed/Global/Population_Global.csv"
+    PATH_TO_FOLDER_DANGER_MAP + f"/processed/Population_Global.csv"
 )
 popcountries["tuple_area"] = list(zip(popcountries.Continent, popcountries.Country, popcountries.Province))
 
@@ -39,12 +43,13 @@ def solve_and_predict_area(
 ):
     time_entering = time.time()
     continent, country, province = tuple_area_
+    # print(continent, country, province)
     country_sub = country.replace(" ", "_")
     province_sub = province.replace(" ", "_")
-    if os.path.exists(PATH_TO_FOLDER_DANGER_MAP + f"processed/Global/Cases_{country_sub}_{province_sub}.csv"):
-        totalcases = pd.read_csv(
-            PATH_TO_FOLDER_DANGER_MAP + f"processed/Global/Cases_{country_sub}_{province_sub}.csv"
-        )
+    path = PATH_TO_FOLDER_DANGER_MAP +    f"/processed/Cases_{country_sub}_{province_sub}.csv"
+    # print(path)
+    if Path(path).is_file():
+        totalcases = pd.read_csv(path)
         if totalcases.day_since100.max() < 0:
             print(f"Not enough cases for Continent={continent}, Country={country} and Province={province}")
             return None
@@ -292,9 +297,11 @@ def solve_and_predict_area(
     else:  # file for that tuple (country, province) doesn't exist in processed files
         return None
 
+
+
 if __name__ == "__main__":
     popcountries = pd.read_csv(
-        PATH_TO_FOLDER_DANGER_MAP + f"processed/Global/Population_Global.csv"
+        PATH_TO_FOLDER_DANGER_MAP + f"/processed/Population_Global.csv"
     )
     try:
         pastparameters = pd.read_csv(
@@ -312,36 +319,41 @@ if __name__ == "__main__":
         solve_and_predict_area, yesterday_=yesterday, pastparameters_=pastparameters,
         allowed_deviation_=allowed_deviation
     )
-    n_cpu = 6
+    n_cpu = 20
+
     popcountries["tuple_area"] = list(zip(popcountries.Continent, popcountries.Country, popcountries.Province))
     list_tuples = popcountries.tuple_area.tolist()
-    with mp.Pool(n_cpu) as pool:
-        for result_area in tqdm(
-                pool.map_async(
-                    solve_and_predict_area_partial, list_tuples,
-                ).get(), total=len(list_tuples)
-        ):
-            if result_area is not None:
-                (
-                    df_parameters_cont_country_prov, df_predictions_since_today_cont_country_prov,
-                    df_predictions_since_100_cont_country_prov, output
-                ) = result_area
-                obj_value = obj_value + output.fun
-                # Then we add it to the list of df to be concatenated to update the tracking df
-                list_df_global_parameters.append(df_parameters_cont_country_prov)
-                list_df_global_predictions_since_today.append(df_predictions_since_today_cont_country_prov)
-                list_df_global_predictions_since_100_cases.append(df_predictions_since_100_cont_country_prov)
-            else:
-                continue
-        print("Finished the Multiprocessing for all areas")
-        pool.close()
-        pool.join()
+
+    pool = mp.Pool(processes=n_cpu)
+
+    for result_area in tqdm(pool.map_async(
+            solve_and_predict_area_partial, list_tuples
+            ).get(), total=len(list_tuples),
+            disable = True):
+        if result_area is not None:
+            print("run")
+            (
+              df_parameters_cont_country_prov, df_predictions_since_today_cont_country_prov,
+              df_predictions_since_100_cont_country_prov, output
+            ) = result_area
+            obj_value = obj_value + output.fun
+            # Then we add it to the list of df to be concatenated to update the tracking df
+            list_df_global_parameters.append(df_parameters_cont_country_prov)
+            list_df_global_predictions_since_today.append(df_predictions_since_today_cont_country_prov)
+            list_df_global_predictions_since_100_cases.append(df_predictions_since_100_cont_country_prov)
+
+            print(pd.list_df_global_parameters.head())
+        else:
+            continue
+    print("Finished the Multiprocessing for all areas")
+    pool.close()
+    pool.join()
 
     # Appending parameters, aggregations per country, per continent, and for the world
     # for predictions today & since 100
     today_date_str = "".join(str(datetime.now().date()).split("-"))
     df_global_parameters = pd.concat(list_df_global_parameters).sort_values(
-        ["Country", "Province"]
+      ["Country", "Province"]
     ).reset_index(drop=True)
     df_global_predictions_since_today = pd.concat(list_df_global_predictions_since_today)
     df_global_predictions_since_today = DELPHIAggregations.append_all_aggregations(
@@ -353,11 +365,10 @@ if __name__ == "__main__":
     )
     delphi_data_saver = DELPHIDataSaver(
         path_to_folder_danger_map=PATH_TO_FOLDER_DANGER_MAP,
-        path_to_website_predicted=PATH_TO_WEBSITE_PREDICTED,
         df_global_parameters=df_global_parameters,
         df_global_predictions_since_today=df_global_predictions_since_today,
         df_global_predictions_since_100_cases=df_global_predictions_since_100_cases,
     )
-    delphi_data_saver.save_all_datasets(save_since_100_cases=False, website=True)
+    delphi_data_saver.save_all_datasets(save_since_100_cases=False, website=False)
     print(f"Exported all 3 datasets to website & danger_map repositories, "+
           f"total runtime was {round((time.time() - time_beginning)/60, 2)} minutes")

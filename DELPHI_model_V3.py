@@ -1,207 +1,4 @@
 # Authors: Hamza Tazi Bouardi (htazi@mit.edu), Michael L. Li (mlli@mit.edu), Omar Skali Lami (oskali@mit.edu)
-import pandas as pd
-import numpy as np
-from scipy.integrate import solve_ivp
-from scipy.optimize import minimize
-from datetime import datetime, timedelta
-
-from multiprocessing import set_start_method
-
-import multiprocessing as mp
-import time
-from functools import partial
-from tqdm.notebook import tqdm
-from DELPHI_utils_V3 import (
-    DELPHIDataCreator, DELPHIAggregations, DELPHIDataSaver, get_initial_conditions, mape
-)
-from DELPHI_params_V3 import (
-    date_MATHEMATICA, default_parameter_list, default_bounds_params,
-    validcases_threshold, IncubeD, RecoverID, RecoverHD, DetectD,
-    VentilatedD, default_maxT, p_v, p_d, p_h, max_iter
-)
-import os
-import yaml
-from pathlib import Path
-
-
-with open("config.yml", "r") as ymlfile:
-    CONFIG = yaml.load(ymlfile, Loader=yaml.BaseLoader)
-CONFIG_FILEPATHS = CONFIG["filepaths"]
-USER_RUNNING = "neha"
-
-time_beginning = time.time()
-yesterday = "".join(str(datetime.now().date() - timedelta(days=1)).split("-"))
-PATH_TO_FOLDER_DANGER_MAP = CONFIG_FILEPATHS["danger_map"][USER_RUNNING]
-# PATH_TO_WEBSITE_PREDICTED = CONFIG_FILEPATHS["website"][USER_RUNNING]
-popcountries = pd.read_csv(
-    PATH_TO_FOLDER_DANGER_MAP + f"/processed/Population_Global.csv"
-)
-popcountries["tuple_area"] = list(zip(popcountries.Continent, popcountries.Country, popcountries.Province))
-
-def solve_and_predict_area(
-        tuple_area_: tuple, yesterday_: str, allowed_deviation_: float, pastparameters_: pd.DataFrame,
-):
-    time_entering = time.time()
-    continent, country, province = tuple_area_
-    # print(continent, country, province)
-    country_sub = country.replace(" ", "_")
-    province_sub = province.replace(" ", "_")
-    path = PATH_TO_FOLDER_DANGER_MAP +    f"/processed/Cases_{country_sub}_{province_sub}.csv"
-    # print(path)
-    if Path(path).is_file():
-        totalcases = pd.read_csv(path)
-        if totalcases.day_since100.max() < 0:
-            print(f"Not enough cases for Continent={continent}, Country={country} and Province={province}")
-            return None
-
-        print(country + ", " + province)
-        if pastparameters_ is not None:
-            parameter_list_total = pastparameters_[
-                (pastparameters_.Country == country) &
-                (pastparameters_.Province == province)
-                ].reset_index(drop=True)
-            if len(parameter_list_total) > 0:
-                parameter_list_line = parameter_list_total.iloc[-1, :].values.tolist()
-                parameter_list = parameter_list_line[5:]
-                # Allowing a 5% drift for states with past predictions, starting in the 5th position are the parameters
-                param_list_lower = [x - 0.1 * abs(x) for x in parameter_list]
-                param_list_upper = [x + 0.1 * abs(x) for x in parameter_list]
-                bounds_params = [(lower, upper)
-                                 for lower, upper in zip(param_list_lower, param_list_upper)]
-                date_day_since100 = pd.to_datetime(parameter_list_line[3])
-                validcases = totalcases[
-                    (totalcases.day_since100 >= 0) &
-                    (totalcases.date <= str((pd.to_datetime(yesterday_) + timedelta(days=1)).date()))
-                    ][["day_since100", "case_cnt", "death_cnt"]].reset_index(drop=True)
-#                parameter_list.insert(5, 0.2)
-#                bounds_params.insert(5, (0, 0.5))
-#                parameter_list.insert(8, 0.1)
-#                bounds_params.insert(8, (0, 5))
-#                parameter_list.insert(9,(len(validcases)-1) - 10)
-#                bounds_params.insert(9,(0, len(validcases)-1))
-#                parameter_list.insert(10, 1)
-#                bounds_params.insert(10, (0.1, 5))
-                bounds_params = tuple(bounds_params)
-            else:
-                # Otherwise use established lower/upper bounds
-                parameter_list = default_parameter_list
-                bounds_params = default_bounds_params
-                date_day_since100 = pd.to_datetime(totalcases.loc[totalcases.day_since100 == 0, "date"].iloc[-1])
-                validcases = totalcases[
-                    (totalcases.day_since100 >= 0) &
-                    (totalcases.date <= str((pd.to_datetime(yesterday_) + timedelta(days=1)).date()))
-                    ][["day_since100", "case_cnt", "death_cnt"]].reset_index(drop=True)
-        else:
-            # Otherwise use established lower/upper bounds
-            parameter_list = default_parameter_list
-            bounds_params = default_bounds_params
-            date_day_since100 = pd.to_datetime(totalcases.loc[totalcases.day_since100 == 0, "date"].iloc[-1])
-            validcases = totalcases[
-                (totalcases.day_since100 >= 0) &
-                (totalcases.date <= str((pd.to_datetime(yesterday_) + timedelta(days=1)).date()))
-                ][["day_since100", "case_cnt", "death_cnt"]].reset_index(drop=True)
-        # Now we start the modeling part:
-        if len(validcases) > validcases_threshold:
-            PopulationT = popcountries[
-                (popcountries.Country == country) & (popcountries.Province == province)
-                ].pop2016.iloc[-1]
-            # We do not scale
-            N = PopulationT
-            PopulationI = validcases.loc[0, "case_cnt"]
-            PopulationR = validcases.loc[0, "death_cnt"] * 5
-            PopulationD = validcases.loc[0, "death_cnt"]
-            PopulationCI = PopulationI - PopulationD - PopulationR
-            """
-            Fixed Parameters based on meta-analysis:
-            p_h: Hospitalization Percentage
-            RecoverHD: Average Days till Recovery
-            VentilationD: Number of Days on Ventilation for Ventilated Patients
-            maxT: Maximum # of Days Modeled
-            p_d: Percentage of True Cases Detected
-            p_v: Percentage of Hospitalized Patients Ventilated,
-            balance: Ratio of Fitting between cases and deaths
-            """
-            # Currently fit on alpha, a and b, r_dth,
-            # & initial condition of exposed state and infected state
-            # Maximum timespan of prediction, defaulted to go to 15/06/2020
-            maxT = (default_maxT - date_day_since100).days + 1
-            """ Fit on Total Cases """
-            t_cases = validcases["day_since100"].tolist() - validcases.loc[0, "day_since100"]
-            validcases_nondeath = validcases["case_cnt"].tolist()
-            validcases_death = validcases["death_cnt"].tolist()
-            balance = validcases_nondeath[-1] / max(validcases_death[-1], 10) / 3
-            fitcasesnd = validcases_nondeath
-            fitcasesd = validcases_death
-            GLOBAL_PARAMS_FIXED = (
-                N, PopulationCI, PopulationR, PopulationD, PopulationI, p_d, p_h, p_v
-            )
-
-            def model_covid(
-                    t, x, alpha, days, r_s, r_dth, p_dth, r_dthdecay, k1, k2, jump, t_jump, std_normal
-            ):
-                """
-                SEIR + Undetected, Deaths, Hospitalized, corrected with ArcTan response curve
-                alpha: Infection rate
-                days: Median day of action
-                r_s: Median rate of action
-                p_dth: Mortality rate
-                k1: Internal parameter 1
-                k2: Internal parameter 2
-                y = [0 S, 1 E,  2 I, 3 AR,   4 DHR,  5 DQR, 6 AD,
-                7 DHD, 8 DQD, 9 R, 10 D, 11 TH, 12 DVR,13 DVD, 14 DD, 15 DT]
-                """
-                r_i = np.log(2) / IncubeD  # Rate of infection leaving incubation phase
-                r_d = np.log(2) / DetectD  # Rate of detection
-                r_ri = np.log(2) / RecoverID  # Rate of recovery not under infection
-                r_rh = np.log(2) / RecoverHD  # Rate of recovery under hospitalization
-                r_rv = np.log(2) / VentilatedD  # Rate of recovery under ventilation
-                gamma_t = (2 / np.pi) * np.arctan(-(t - days) / 20 * r_s) + 1 +  jump * np.exp(-(t - t_jump)**2 /(2 * std_normal ** 2))
-                # gamma_t = (2 / np.pi) * np.arctan(-(t - days) / 20 * r_s) + 1 + jump * (np.arctan(t - t_jump) + np.pi / 2) * min(1, 2 / np.pi * np.arctan( - (t - t_jump)/ 20 * r_decay) + 1)
-
-                # if t < t_jump:
-                #     gamma_t = (2 / np.pi) * np.arctan(-(t - days) / 20 * r_s) + 1
-                # else:
-                #     gamma_t = (2 / np.pi) * np.arctan(-(t - days) / 20 * r_s) + 1 + jump
-                p_dth_mod = (2 / np.pi) * (p_dth - 0.01) * (np.arctan(- t / 20 * r_dthdecay) + np.pi / 2) + 0.01
-                assert len(x) == 16, f"Too many input variables, got {len(x)}, expected 16"
-                S, E, I, AR, DHR, DQR, AD, DHD, DQD, R, D, TH, DVR, DVD, DD, DT = x
-                # Equations on main variables
-                dSdt = -alpha * gamma_t * S * I / N
-                dEdt = alpha * gamma_t * S * I / N - r_i * E
-                dIdt = r_i * E - r_d * I
-                dARdt = r_d * (1 - p_dth_mod) * (1 - p_d) * I - r_ri * AR
-                dDHRdt = r_d * (1 - p_dth_mod) * p_d * p_h * I - r_rh * DHR
-                dDQRdt = r_d * (1 - p_dth_mod) * p_d * (1 - p_h) * I - r_ri * DQR
-                dADdt = r_d * p_dth_mod * (1 - p_d) * I - r_dth * AD
-                dDHDdt = r_d * p_dth_mod * p_d * p_h * I - r_dth * DHD
-                dDQDdt = r_d * p_dth_mod * p_d * (1 - p_h) * I - r_dth * DQD
-                dRdt = r_ri * (AR + DQR) + r_rh * DHR
-                dDdt = r_dth * (AD + DQD + DHD)
-                # Helper states (usually important for some kind of output)
-                dTHdt = r_d * p_d * p_h * I
-                dDVRdt = r_d * (1 - p_dth_mod) * p_d * p_h * p_v * I - r_rv * DVR
-                dDVDdt = r_d * p_dth_mod * p_d * p_h * p_v * I - r_dth * DVD
-                dDDdt = r_dth * (DHD + DQD)
-                dDTdt = r_d * p_d * I
-                return [
-                    dSdt, dEdt, dIdt, dARdt, dDHRdt, dDQRdt, dADdt, dDHDdt, dDQDdt,
-                    dRdt, dDdt, dTHdt, dDVRdt, dDVDdt, dDDdt, dDTdt
-                ]
-
-            def residuals_totalcases(params):
-                """
-                Wanted to start with solve_ivp because figures will be faster to debug
-                params: (alpha, days, r_s, r_dth, p_dth, k1, k2), fitted parameters of the model
-                """
-                # Variables Initialization for the ODE system
-                alpha, days, r_s, r_dth, p_dth, r_dthdecay, k1, k2, jump, t_jump, std_normal = params
-                params = (
-                    max(alpha, 0), days, max(r_s, 0), max(r_dth, 0), max(min(p_dth, 1), 0), max(min(r_dthdecay, 1), 0),
-                         max(k1, 0), max(k2, 0), max(jump, 0), max(t_jump, 0),max(std_normal, 0)
-                )
-                x_0_cases = get_initial_conditions(
-                    params_fitted=params,
-                    global_params_fixed=GLOBAL_PARAMS_FIXED
   # Authors: Hamza Tazi Bouardi (htazi@mit.edu), Michael L. Li (mlli@mit.edu), Omar Skali Lami (oskali@mit.edu)
 import pandas as pd
 import numpy as np
@@ -503,7 +300,7 @@ def solve_and_predict_area(
 
 def pool_proc(f, alist, n_cpu):
   pool = mp.Pool(processes = n_cpu)
-  pool.map_async(f, alist)
+  pool.imap(f, alist)
 
   pool.close()
   pool.join()
@@ -535,8 +332,6 @@ if __name__ == "__main__":
     popcountries["tuple_area"] = list(zip(popcountries.Continent, popcountries.Country, popcountries.Province))
     list_tuples = popcountries.tuple_area.tolist()
 
-                    
-                    
     # areas = pool_proc(solve_and_predict_area_partial, list_tuples, n_cpu=n_cpu) # uses mp Pool
 
     areas = map(solve_and_predict_area_partial, list_tuples) # uses map function
@@ -545,8 +340,6 @@ if __name__ == "__main__":
     # for tup in list_tuples:
     #   areas.append(solve_and_predict_area_partial(tup)) # uses for loop
 
-                    
-                    
     for result_area in areas:
         if result_area is not None:
             print("run")

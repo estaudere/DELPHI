@@ -356,8 +356,8 @@ if __name__ == "__main__":
         else:
             continue
     print("Finished the Multiprocessing for all areas")
-    pool.close()
-    pool.join()
+    # pool.close()
+    # pool.join()
 
     # Appending parameters, aggregations per country, per continent, and for the world
     # for predictions today & since 100

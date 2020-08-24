@@ -13,13 +13,11 @@ from DELPHI_params_V3 import (TIME_DICT, MAPPING_STATE_CODE_TO_STATE_NAME, defau
 class DELPHIDataSaver:
     def __init__(
             self, path_to_folder_danger_map: str,
-            path_to_website_predicted: str,
             df_global_parameters: Union[pd.DataFrame, None],
             df_global_predictions_since_today: pd.DataFrame,
             df_global_predictions_since_100_cases: pd.DataFrame,
     ):
         self.PATH_TO_FOLDER_DANGER_MAP = path_to_folder_danger_map
-        self.PATH_TO_WEBSITE_PREDICTED = path_to_website_predicted
         self.df_global_parameters = df_global_parameters
         self.df_global_predictions_since_today = df_global_predictions_since_today
         self.df_global_predictions_since_100_cases = df_global_predictions_since_100_cases
@@ -34,32 +32,32 @@ class DELPHIDataSaver:
         self.df_global_predictions_since_today.to_csv(
             self.PATH_TO_FOLDER_DANGER_MAP + f"/predicted/Global_V2_{today_date_str}.csv", index=False
         )
-        if website:
-            self.df_global_parameters.to_csv(
-                self.PATH_TO_WEBSITE_PREDICTED + f"data/predicted/Parameters_Global_V2_{today_date_str}.csv",
-                index=False
-            )
-            self.df_global_predictions_since_today.to_csv(
-                self.PATH_TO_WEBSITE_PREDICTED + f"data/predicted/Global_V2_{today_date_str}.csv",
-                index=False
-            )
-            self.df_global_predictions_since_today.to_csv(
-                self.PATH_TO_WEBSITE_PREDICTED + f"data/predicted/Global.csv",
-                index=False
-            )
+        # if website:
+        #     self.df_global_parameters.to_csv(
+        #         self.PATH_TO_WEBSITE_PREDICTED + f"data/predicted/Parameters_Global_V2_{today_date_str}.csv",
+        #         index=False
+        #     )
+        #     self.df_global_predictions_since_today.to_csv(
+        #         self.PATH_TO_WEBSITE_PREDICTED + f"data/predicted/Global_V2_{today_date_str}.csv",
+        #         index=False
+        #     )
+        #     self.df_global_predictions_since_today.to_csv(
+        #         self.PATH_TO_WEBSITE_PREDICTED + f"data/predicted/Global.csv",
+        #         index=False
+        #     )
         if save_since_100_cases:
             # Save predictions since 100 cases
             self.df_global_predictions_since_100_cases.to_csv(
                 self.PATH_TO_FOLDER_DANGER_MAP + f"/predicted/Global_V2_since100_{today_date_str}.csv", index=False
             )
-            self.df_global_predictions_since_100_cases.to_csv(
-                self.PATH_TO_WEBSITE_PREDICTED + f"data/predicted/Global_V2_since100_{today_date_str}.csv", index=False
-            )
-            if website:
-                self.df_global_predictions_since_100_cases.to_csv(
-                    self.PATH_TO_WEBSITE_PREDICTED + f"data/predicted/Global_V2_since100_{today_date_str}.csv",
-                    index=False
-                )
+            # self.df_global_predictions_since_100_cases.to_csv(
+            #     self.PATH_TO_WEBSITE_PREDICTED + f"data/predicted/Global_V2_since100_{today_date_str}.csv", index=False
+            # )
+            # if website:
+            #     self.df_global_predictions_since_100_cases.to_csv(
+            #         self.PATH_TO_WEBSITE_PREDICTED + f"data/predicted/Global_V2_since100_{today_date_str}.csv",
+            #         index=False
+            #     )
 
     @staticmethod
     def create_nested_dict_from_final_dataframe(df_predictions: pd.DataFrame) -> dict:
@@ -132,12 +130,12 @@ class DELPHIDataSaver:
             ) as handle:
                 json.dump(dict_predictions_policies_world_since_100_cases, handle)
 
-        if website:
-            with open(
-                self.PATH_TO_WEBSITE_PREDICTED +
-                f'assets/policies/World_Scenarios.json', 'w'
-            ) as handle:
-                json.dump(dict_predictions_policies_world_since_100_cases, handle)
+        # if website:
+        #     with open(
+        #         self.PATH_TO_WEBSITE_PREDICTED +
+        #         f'assets/policies/World_Scenarios.json', 'w'
+        #     ) as handle:
+        #         json.dump(dict_predictions_policies_world_since_100_cases, handle)
 
             # with open(
             #         self.PATH_TO_WEBSITE_PREDICTED + f'/data/predicted/world_Python_Scenarios_since_100_cases.json', 'w'

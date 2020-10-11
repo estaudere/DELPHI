@@ -1,0 +1,21 @@
+Continent,Country,Province,Day,Total Detected,Active,Active Hospitalized,Cumulative Hospitalized,Total Detected Deaths,Active Ventilated
+None,None,None,2020-10-11,113901,68,42,17084,2347,1
+None,None,None,2020-10-12,113901,65,40,17084,2347,1
+None,None,None,2020-10-13,113901,61,38,17084,2347,1
+None,None,None,2020-10-14,113901,58,36,17084,2347,1
+None,None,None,2020-10-15,113901,55,35,17084,2347,1
+North America,None,None,2020-10-11,113901,68,42,17084,2347,1
+North America,None,None,2020-10-12,113901,65,40,17084,2347,1
+North America,None,None,2020-10-13,113901,61,38,17084,2347,1
+North America,None,None,2020-10-14,113901,58,36,17084,2347,1
+North America,None,None,2020-10-15,113901,55,35,17084,2347,1
+North America,US,None,2020-10-11,113901,68,42,17084,2347,1
+North America,US,None,2020-10-12,113901,65,40,17084,2347,1
+North America,US,None,2020-10-13,113901,61,38,17084,2347,1
+North America,US,None,2020-10-14,113901,58,36,17084,2347,1
+North America,US,None,2020-10-15,113901,55,35,17084,2347,1
+North America,US,Texas,2020-10-11,113901,68,42,17084,2347,1
+North America,US,Texas,2020-10-12,113901,65,40,17084,2347,1
+North America,US,Texas,2020-10-13,113901,61,38,17084,2347,1
+North America,US,Texas,2020-10-14,113901,58,36,17084,2347,1
+North America,US,Texas,2020-10-15,113901,55,35,17084,2347,1
